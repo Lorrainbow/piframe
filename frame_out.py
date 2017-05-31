@@ -9,9 +9,7 @@ from datetime import datetime
 import smtplib
 from email.mime.audio import MIMEAudio
 from email.mime.multipart import MIMEMultipart
-import os
 
-#setup the GPIO pins for the buttons and the LEDs
 green_button = 13
 red_button = 6
 red_led = 12
@@ -22,9 +20,29 @@ GPIO.setup(green_button, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(red_led, GPIO.OUT) 
 GPIO.setup(green_led, GPIO.OUT) 
 
+red_input_state = GPIO.input(red_button) # Sense the button
+green_input_state = GPIO.input(green_button) # Sense the button
+
+if (green_input_state == False):
+    green_invert = True
+else:
+    green_invert = False
+
+   
+if (red_input_state == False):
+    red_invert = True
+else:
+    red_invert = False
+
+    
+    
+    
+       
 recording = 0
 
 
+#how many files have we sent?
+import os
 
 def fcount(path):
     """ Counts the number of files in a directory """
@@ -36,102 +54,112 @@ def fcount(path):
     return count  
 
 log_file=open('/home/pi/errors.log', 'a')
-    
-    
-#forever check for button presses/new files
-while True:
-    #my buttons are weird... 
-    red_input_state = GPIO.input(red_button) 
-    green_input_state = GPIO.input(green_button)
 
-    if (green_input_state == False):
-        green_invert = True
-    else:
-        green_invert = False
-   
-    if (red_input_state == False):
-        red_invert = True
-    else:
-        red_invert = False
+message_ready = False     
+while True:    
+    red_input_state = GPIO.input(red_button) # Sense the button
+    green_input_state = GPIO.input(green_button) # Sense the button
 
-    time.sleep(0.05)        
+    time.sleep(0.05)           
     
-    #any new files to listen to?    
-    new_files= sorted(glob.glob('/home/pi/piframe_in/*'))        
-        
-    #if there are any new files, turn the green light on
+    #any files to listen to?    
+    new_files = sorted(glob.glob('/home/pi/piframe_in/*'))
+    if not message_ready and new_files:
+        message_ready = True        
+        if (green_input_state == False):
+            green_invert = True
+        else:
+            green_invert = False        
+    
+    
     if new_files:
         GPIO.output(green_led, GPIO.HIGH)    
     else:
-        GPIO.output(green_led, GPIO.LOW)
+        GPIO.output(green_led, GPIO.LOW)    
     
     #they've pressed the green button and the green light is on     
-    if ((green_input_state == green_invert) and (new_files)):                   
-                
+    if ((green_input_state == green_invert) and (new_files)):
         #play                
-        subprocess.call(["aplay", new_files[0]])        
+        subprocess.call(["aplay", new_files[0]])
         
         #remove the file once it has played
         os.remove(new_files[0])        
         
+        message_ready = False
+        
     
     #they've pressed the red button
     if red_input_state == red_invert:        
-        #they've pressed the red button for the first time
         if (recording == 0):
+            #print ("Recording...")
+            log_file.write("recording")
             #turn the red light on - we're recording
             GPIO.output(red_led, GPIO.HIGH)            
             
-            #get the current date time
-            f_time = datetime.now().strftime('%d%m%Y-%H%M')          
+            #get the datetime
+            f_time = datetime.now().strftime('%d%m%Y-%H%M%s')
+           
             
             #set the filename: datetime+the number audio file it is 
             audio_filename = "%s.wav" %(f_time)
             #set the path/file name
-            audio_filepathname = "/home/pi/piframe_out/%s" %audio_filename           
+            audio_filepathname = "/home/pi/piframe_out/%s" %audio_filename
             
-            #setup a process to record and call it
+            
+            #setup a process and call it
             cmd1 = ["arecord", audio_filepathname, "-r", "48000", "-f", "S16_LE"]
-            pro1 = subprocess.Popen(cmd1)               
+            pro1 = subprocess.Popen(cmd1)   
+
+            log_file.write("recorded")
             recording = 1
-    
-    #they've pressed the red button for the second time
+            
     if red_input_state != red_invert:
-        if (recording == 1):            
+        if (recording == 1):
+            #print ("stop recording")
+            log_file.write("stop recorded")
             #stop recording - kill the process
             pro1.kill()
+            log_file.write("stop recorded1\n")
+            #turn the light off red
+            GPIO.output(red_led, GPIO.LOW)
             
-            #turn the red light off
-            GPIO.output(red_led, GPIO.LOW)            
             
-            #setup the email message with the unique name "piframe" in the subject line
-            subject = 'piframe ' + f_time            
-            msg = MIMEMultipart()            
+            #setup the message            
+            subject = 'piframe ' + f_time
+            log_file.write("stop recorded2\n")
+            msg = MIMEMultipart()
             msg['Subject'] = subject
-            
-            #get the to/from details from your settings file
             msg['From'] = settings.me
             msg['To'] = settings.toaddr
-            msg.preamble = "Audio @ " + f_time
+            msg.preamble = "Audio @ " + f_time            
+            log_file.write("stop recorded3\n")
+            log_file.write(audio_filepathname)
             fp = open(audio_filepathname, 'rb')            
-            aud = MIMEAudio(fp.read())            
+            log_file.write("stop recorded4\n")
+            aud = MIMEAudio(fp.read())
+            log_file.write("stop recorded5\n")
             fp.close()
             msg.attach(aud)
-            
-            #send the message
-            try:                
+            log_file.write("stop recorded6\n")
+            try:
+                log_file.write("stop recorded7\n")
                 s = smtplib.SMTP('smtp.gmail.com', 587)
                 s.ehlo()
                 s.starttls()
                 s.ehlo()
-                s.login(user=settings.me, password=settings.password)                
-                s.sendmail(settings.me, settings.toaddr, msg.as_string())                
+                s.login(user=settings.me, password=settings.password)
+                log_file.write("stop recorded8\n")
+                s.sendmail(settings.me, settings.toaddr, msg.as_string())
+                log_file.write("stop recorded9\n")
                 s.quit()                               
             except smtplib.SMTPException as error:                                            
                 error_log_file=open('/home/pi/errors.log', 'a')
                 error_log_file.write(error)
                 error_log_file.close()     
              
+        
+            #print ("message sent")
+            log_file.write("message sent")
             #remove the recording 
             os.remove(audio_filepathname)           
             
